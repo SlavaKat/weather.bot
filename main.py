@@ -1,10 +1,27 @@
 import os
 import httpx
 import requests
+import sqlite3
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from dotenv import load_dotenv
+
+# {{ Новые функции для работы с базой данных }}
+def set_user_default_city(user_id: int, city: str):
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('INSERT OR REPLACE INTO user_preferences (user_id, default_city) VALUES (?, ?)', (user_id, city))
+    conn.commit()
+    conn.close()
+
+def get_user_default_city(user_id: int) -> str | None:
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT default_city FROM user_preferences WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
 
 #Функция для получения данных о погоде
 async def get_weather( city: str, api_key: str) -> str:
@@ -85,6 +102,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         'Привет! Я бот для проверки погоды. Выбери, что тебя интересует:',
         reply_markup=reply_markup
     )
+
+# {{ Новая команда /setcity }}
+async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text('Пожалуйста, укажите город, который хотите установить как город по умолчанию. Пример: /setcity Москва')
+        return
+
+    user_id = update.effective_user.id
+    city = ' '.join(context.args)
+    set_user_default_city(user_id, city)
+    await update.message.reply_text(f'Ваш город по умолчанию установлен как: {city}.')
+
+# {{ Новая команда /getcity }}
+async def get_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    default_city = get_user_default_city(user_id)
+
+    if default_city:
+        await update.message.reply_text(f'Ваш текущий город по умолчанию: {default_city}.')
+    else:
+        await update.message.reply_text('У вас пока не установлен город по умолчанию. Используйте /setcity <название_города> для установки.')
 
 #Команда /weather
 async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -206,6 +244,17 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 async def handle_city_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if 'next_action' in context.user_data:
         city = update.message.text
+        # {{ Изменения для использования города по умолчанию, если не введен }}
+        if not city: # Если пользователь просто нажал Enter или отправил пустое сообщение
+            user_id = update.effective_user.id
+            default_city = get_user_default_city(user_id)
+            if default_city:
+                city = default_city
+                await update.message.reply_text(f'Использую ваш город по умолчанию: {default_city}.')
+            else:
+                await update.message.reply_text('Вы не указали город. Пожалуйста, введите название города или установите город по умолчанию с помощью /setcity.')
+                return
+
         api_key = os.getenv('OPENWEATHER_API_KEY')
 
         if not api_key:
@@ -244,6 +293,19 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         await update.message.reply_text('Я не ожидал локацию. Пожалуйста, используйте /start, чтобы начать.')
 
+# {{ 2. Функция для инициализации базы данных }}
+def init_db():
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_preferences (
+            user_id INTEGER PRIMARY KEY,
+            default_city TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
 #Основная функция
 
 def main():
@@ -252,14 +314,16 @@ def main():
     if not TELEGRAM_API_TOKEN:
         print('Токен Telegram бота не установлен. Пожалуйста, установите переменную окружения TELEGRAM_BOT_TOKEN.')
         return
+    
+    init_db() # {{ 3. Инициализируем базу данных при запуске бота }}
 
     #создаем объект приложения
     application = Application.builder().token(TELEGRAM_API_TOKEN).get_updates_pool_timeout(20).build()
 
     #Регистрация команд
     application.add_handler(CommandHandler('start', start))
-    # application.add_handler(CommandHandler('weather', weather)) # Удалено, так как теперь используем кнопки
-    # application.add_handler(CommandHandler('forecast', forecast)) # Удалено, так как теперь используем кнопки
+    application.add_handler(CommandHandler('setcity', set_city)) # {{ Регистрируем новую команду /setcity }}
+    application.add_handler(CommandHandler('getcity', get_city)) # {{ Регистрируем новую команду /getcity }}
     application.add_handler(CallbackQueryHandler(button_callback_handler)) # Новый обработчик для кнопок
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_city_input)) # Новый обработчик для текстового ввода
     application.add_handler(MessageHandler(filters.LOCATION, handle_location)) # Новый обработчик для локации
