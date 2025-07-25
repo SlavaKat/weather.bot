@@ -395,13 +395,13 @@ def init_db():
             default_city TEXT
         )
     ''')
-    # {{ Добавляем новую таблицу для избранных городов }}
+    # Добавляем новую таблицу для избранных городов
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS favorite_cities (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             city_name TEXT NOT NULL,
-            UNIQUE(user_id, city_name) # Гарантирует, что у пользователя не будет дубликатов городов
+            UNIQUE(user_id, city_name) -- Гарантирует, что у пользователя не будет дубликатов городов
         )
     ''')
     conn.commit()
