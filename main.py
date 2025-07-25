@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 from dotenv import load_dotenv
 
-# {{ Новые функции для работы с базой данных }}
+# Новые функции для работы с базой данных
 def set_user_default_city(user_id: int, city: str):
     conn = sqlite3.connect('weather_bot.db')
     cursor = conn.cursor()
@@ -22,6 +22,28 @@ def get_user_default_city(user_id: int) -> str | None:
     result = cursor.fetchone()
     conn.close()
     return result[0] if result else None
+
+# {{ Новые функции для работы с любимыми городами }}
+def add_favorite_city(user_id: int, city: str):
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    # Проверяем, существует ли уже такой город у пользователя, чтобы избежать дубликатов
+    cursor.execute('SELECT 1 FROM favorite_cities WHERE user_id = ? AND city_name = ?', (user_id, city))
+    if not cursor.fetchone():
+        cursor.execute('INSERT INTO favorite_cities (user_id, city_name) VALUES (?, ?)', (user_id, city))
+        conn.commit()
+        conn.close()
+        return True # Город добавлен
+    conn.close()
+    return False # Город уже существует
+
+def get_favorite_cities(user_id: int) -> list[str]:
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT city_name FROM favorite_cities WHERE user_id = ? ORDER BY city_name', (user_id,))
+    cities = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return cities
 
 #Функция для получения данных о погоде
 async def get_weather( city: str, api_key: str) -> str:
@@ -96,6 +118,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("Прогноз на 5 дней", callback_data='get_5_day_forecast')],
         [InlineKeyboardButton("Почасовой прогноз", callback_data='get_hourly_forecast')],
         [InlineKeyboardButton("Погода по местоположению", callback_data='get_weather_by_location')],
+        [InlineKeyboardButton("Избранные города", callback_data='show_favorite_cities')], # {{ Добавляем новую кнопку }}
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -123,6 +146,30 @@ async def get_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f'Ваш текущий город по умолчанию: {default_city}.')
     else:
         await update.message.reply_text('У вас пока не установлен город по умолчанию. Используйте /setcity <название_города> для установки.')
+
+# {{ Новая команда /addfav }}
+async def add_fav(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text('Пожалуйста, укажите город, который хотите добавить в избранное. Пример: /addfav Париж')
+        return
+
+    user_id = update.effective_user.id
+    city = ' '.join(context.args).strip()
+    if add_favorite_city(user_id, city):
+        await update.message.reply_text(f'Город "{city}" добавлен в ваш список избранных.')
+    else:
+        await update.message.reply_text(f'Город "{city}" уже есть в вашем списке избранных.')
+
+# {{ Новая команда /listfav }}
+async def list_fav(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    favorite_cities = get_favorite_cities(user_id)
+
+    if favorite_cities:
+        message = 'Ваши избранные города:\n' + '\n'.join(f'- {city}' for city in favorite_cities)
+        await update.message.reply_text(message)
+    else:
+        await update.message.reply_text('У вас пока нет избранных городов. Используйте /addfav <название_города>, чтобы добавить.')
 
 #Команда /weather
 async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -239,12 +286,57 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     elif query.data == 'get_weather_by_location': # Новый обработчик для погоды по местоположению
         context.user_data['next_action'] = 'weather_by_location'
         await query.edit_message_text('Пожалуйста, отправьте свою геолокацию, чтобы я мог определить погоду в вашем текущем местоположении.')
+    elif query.data == 'show_favorite_cities': # {{ Обработка новой кнопки "Избранные города" }}
+        user_id = query.from_user.id
+        favorite_cities = get_favorite_cities(user_id)
+        
+        if favorite_cities:
+            # Создаем кнопки для каждого избранного города
+            fav_city_buttons = []
+            for city in favorite_cities:
+                # Используем префикс 'fav_city:' для callback_data, чтобы потом легко определить, что это город из избранного
+                fav_city_buttons.append([InlineKeyboardButton(city, callback_data=f'fav_city:{city}')])
+            
+            # Добавляем кнопку "Назад"
+            fav_city_buttons.append([InlineKeyboardButton("⬅️ Назад в меню", callback_data='back_to_main_menu')])
+            
+            reply_markup = InlineKeyboardMarkup(fav_city_buttons)
+            await query.edit_message_text(
+                'Ваши избранные города. Нажмите, чтобы узнать погоду:',
+                reply_markup=reply_markup
+            )
+        else:
+            keyboard = [[InlineKeyboardButton("⬅️ Назад в меню", callback_data='back_to_main_menu')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                'У вас пока нет избранных городов. Используйте команду /addfav <название_города>, чтобы добавить их.',
+                reply_markup=reply_markup
+            )
+    elif query.data.startswith('fav_city:'): # {{ Обработка нажатия на кнопку с избранным городом }}
+        city = query.data.split(':', 1)[1] # Извлекаем название города из callback_data
+        api_key = os.getenv('OPENWEATHER_API_KEY')
+
+        if not api_key:
+            await query.edit_message_text('API ключ OpenWeatherMap не установлен. Пожалуйста, установите переменную окружения OPENWEATHER_API_KEY.')
+            return
+        
+        weather_info = await get_weather(city, api_key)
+        # После получения погоды, можно предложить вернуться в главное меню или показать снова список избранных
+        keyboard = [
+            [InlineKeyboardButton("⬅️ Назад в меню", callback_data='back_to_main_menu')]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(weather_info, reply_markup=reply_markup)
+    elif query.data == 'back_to_main_menu': # {{ Обработка кнопки "Назад" }}
+        # Просто вызываем команду start, чтобы вернуть главное меню
+        await start(update, context)
+
 
 # Обработчик текстовых сообщений (после нажатия кнопки)
 async def handle_city_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if 'next_action' in context.user_data:
         city = update.message.text
-        # {{ Изменения для использования города по умолчанию, если не введен }}
+        # Изменения для использования города по умолчанию, если не введен
         if not city: # Если пользователь просто нажал Enter или отправил пустое сообщение
             user_id = update.effective_user.id
             default_city = get_user_default_city(user_id)
@@ -303,6 +395,15 @@ def init_db():
             default_city TEXT
         )
     ''')
+    # {{ Добавляем новую таблицу для избранных городов }}
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS favorite_cities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            city_name TEXT NOT NULL,
+            UNIQUE(user_id, city_name) # Гарантирует, что у пользователя не будет дубликатов городов
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -322,8 +423,10 @@ def main():
 
     #Регистрация команд
     application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('setcity', set_city)) # {{ Регистрируем новую команду /setcity }}
-    application.add_handler(CommandHandler('getcity', get_city)) # {{ Регистрируем новую команду /getcity }}
+    application.add_handler(CommandHandler('setcity', set_city))
+    application.add_handler(CommandHandler('getcity', get_city))
+    application.add_handler(CommandHandler('addfav', add_fav)) # {{ Регистрируем новую команду /addfav }}
+    application.add_handler(CommandHandler('listfav', list_fav)) # {{ Регистрируем новую команду /listfav }}
     application.add_handler(CallbackQueryHandler(button_callback_handler)) # Новый обработчик для кнопок
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_city_input)) # Новый обработчик для текстового ввода
     application.add_handler(MessageHandler(filters.LOCATION, handle_location)) # Новый обработчик для локации
