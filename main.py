@@ -45,6 +45,33 @@ def get_favorite_cities(user_id: int) -> list[str]:
     conn.close()
     return cities
 
+# {{ Новые функции для работы с запланированными прогнозами }}
+def set_scheduled_forecast(user_id: int, city: str, forecast_time: str):
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    cursor.execute(
+        'INSERT OR REPLACE INTO user_preferences (user_id, default_city, scheduled_forecast_city, scheduled_forecast_time) '
+        'VALUES (?, COALESCE((SELECT default_city FROM user_preferences WHERE user_id = ?), NULL), ?, ?)',
+        (user_id, user_id, city, forecast_time)
+    )
+    conn.commit()
+    conn.close()
+
+def get_scheduled_forecast(user_id: int) -> tuple[str, str] | None:
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT scheduled_forecast_city, scheduled_forecast_time FROM user_preferences WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result if result else None
+
+def remove_scheduled_forecast(user_id: int):
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE user_preferences SET scheduled_forecast_city = NULL, scheduled_forecast_time = NULL WHERE user_id = ?', (user_id,))
+    conn.commit()
+    conn.close()
+
 #Функция для получения данных о погоде
 async def get_weather( city: str, api_key: str) -> str:
     url = f'https://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric&lang=ru'
@@ -121,10 +148,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("Избранные города", callback_data='show_favorite_cities')], # {{ Добавляем новую кнопку }}
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        'Привет! Я бот для проверки погоды. Выбери, что тебя интересует:',
-        reply_markup=reply_markup
-    )
+
+    # Проверяем, является ли обновление результатом нажатия кнопки
+    if update.callback_query:
+        query = update.callback_query
+        # query.answer() уже вызывается в начале button_callback_handler, но можно добавить для ясности,
+        # если start будет вызываться напрямую из другого callback_query, где query.answer() не было.
+        # await query.answer() # Отвечаем на callbackQuery, чтобы убрать индикатор загрузки
+        await query.edit_message_text(
+            'Привет! Я MeteoBot для проверки погоды. Выбери, что тебя интересует:',
+            reply_markup=reply_markup
+        )
+    else:
+        # Если это обычная команда /start
+        await update.message.reply_text(
+            'Привет! Я MeteoBot для проверки погоды. Выбери, что тебя интересует:',
+            reply_markup=reply_markup
+        )
 
 # {{ Новая команда /setcity }}
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -170,6 +210,75 @@ async def list_fav(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(message)
     else:
         await update.message.reply_text('У вас пока нет избранных городов. Используйте /addfav <название_города>, чтобы добавить.')
+
+# {{ Новая команда /subscribe_forecast }}
+async def subscribe_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            'Пожалуйста, укажите город и время для ежедневного прогноза. Пример: /subscribe_forecast Москва 09:00'
+        )
+        return
+
+    user_id = update.effective_user.id
+    city = ' '.join(context.args[:-1])
+    forecast_time_str = context.args[-1]
+
+    try:
+        # Проверяем формат времени HH:MM
+        forecast_time = datetime.strptime(forecast_time_str, '%H:%M').time()
+    except ValueError:
+        await update.message.reply_text('Неверный формат времени. Пожалуйста, используйте HH:MM, например 09:00.')
+        return
+
+    set_scheduled_forecast(user_id, city, forecast_time_str)
+
+    # Удаляем существующую задачу, если есть
+    job_name = f'scheduled_forecast_{user_id}'
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    for job in current_jobs:
+        job.schedule_removal()
+
+    # Добавляем новую ежедневную задачу
+    context.job_queue.run_daily(
+        send_scheduled_weather,
+        time=forecast_time,
+        days=(0, 1, 2, 3, 4, 5, 6), # Каждый день недели
+        data={'user_id': user_id, 'city': city},
+        name=job_name
+    )
+
+    await update.message.reply_text(
+        f'Вы успешно подписались на ежедневный прогноз погоды в {city} в {forecast_time_str}.'
+    )
+
+# {{ Новая команда /unsubscribe_forecast }}
+async def unsubscribe_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    remove_scheduled_forecast(user_id)
+
+    job_name = f'scheduled_forecast_{user_id}'
+    current_jobs = context.job_queue.get_jobs_by_name(job_name)
+    if current_jobs:
+        for job in current_jobs:
+            job.schedule_removal()
+        await update.message.reply_text('Вы успешно отписались от ежедневного прогноза погоды.')
+    else:
+        await update.message.reply_text('У вас нет активных подписок на ежедневный прогноз.')
+
+# {{ Функция, которая будет отправлять запланированный прогноз }}
+async def send_scheduled_weather(context: ContextTypes.DEFAULT_TYPE) -> None:
+    job_data = context.job.data
+    user_id = job_data['user_id']
+    city = job_data['city']
+    
+    api_key = os.getenv('OPENWEATHER_API_KEY')
+    if not api_key:
+        print(f'API ключ OpenWeatherMap не установлен для пользователя {user_id}. Невозможно отправить прогноз.')
+        # Можно отправить сообщение пользователю, если это критично, но для автоматической задачи лучше просто залогировать
+        return
+
+    weather_info = await get_weather(city, api_key)
+    await context.bot.send_message(chat_id=user_id, text=f'Ваш ежедневный прогноз погоды для {city}:\n\n{weather_info}')
 
 #Команда /weather
 async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -392,7 +501,10 @@ def init_db():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_preferences (
             user_id INTEGER PRIMARY KEY,
-            default_city TEXT
+            default_city TEXT,
+            -- Новые поля для запланированного прогноза
+            scheduled_forecast_city TEXT,
+            scheduled_forecast_time TEXT
         )
     ''')
     # Добавляем новую таблицу для избранных городов
@@ -427,9 +539,34 @@ def main():
     application.add_handler(CommandHandler('getcity', get_city))
     application.add_handler(CommandHandler('addfav', add_fav)) # {{ Регистрируем новую команду /addfav }}
     application.add_handler(CommandHandler('listfav', list_fav)) # {{ Регистрируем новую команду /listfav }}
+    application.add_handler(CommandHandler('subscribe_forecast', subscribe_forecast)) # {{ Регистрируем новую команду /subscribe_forecast }}
+    application.add_handler(CommandHandler('unsubscribe_forecast', unsubscribe_forecast)) # {{ Регистрируем новую команду /unsubscribe_forecast }}
     application.add_handler(CallbackQueryHandler(button_callback_handler)) # Новый обработчик для кнопок
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_city_input)) # Новый обработчик для текстового ввода
     application.add_handler(MessageHandler(filters.LOCATION, handle_location)) # Новый обработчик для локации
+
+    # Загружаем существующие запланированные задачи при запуске
+    conn = sqlite3.connect('weather_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT user_id, scheduled_forecast_city, scheduled_forecast_time FROM user_preferences WHERE scheduled_forecast_city IS NOT NULL AND scheduled_forecast_time IS NOT NULL')
+    scheduled_tasks = cursor.fetchall()
+    conn.close()
+
+    for user_id, city, forecast_time_str in scheduled_tasks:
+        try:
+            forecast_time = datetime.strptime(forecast_time_str, '%H:%M').time()
+            job_name = f'scheduled_forecast_{user_id}'
+            application.job_queue.run_daily(
+                send_scheduled_weather,
+                time=forecast_time,
+                days=(0, 1, 2, 3, 4, 5, 6),
+                data={'user_id': user_id, 'city': city},
+                name=job_name
+            )
+            print(f'Загружена запланированная задача для пользователя {user_id} в {city} в {forecast_time_str}')
+        except ValueError:
+            print(f'Ошибка загрузки запланированной задачи для пользователя {user_id}: неверный формат времени {forecast_time_str}')
+
 
     #Запуск бота
     print('Бот запущен. Нажмите Ctrl+C для остановки')
