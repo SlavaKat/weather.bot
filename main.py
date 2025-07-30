@@ -146,6 +146,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("Почасовой прогноз", callback_data='get_hourly_forecast')],
         [InlineKeyboardButton("Погода по местоположению", callback_data='get_weather_by_location')],
         [InlineKeyboardButton("Избранные города", callback_data='show_favorite_cities')],
+        [InlineKeyboardButton("Запланированный прогноз", callback_data='manage_scheduled_forecasts')], # {{ Добавляем новую кнопку для запланированных прогнозов }}
         [InlineKeyboardButton("✍️ Обратная связь", callback_data='feedback_button')], # {{ Добавляем новую кнопку для обратной связи }}
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -164,6 +165,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         # Если это обычная команда /start
         await update.message.reply_text(
             'Привет! Я MeteoBot для проверки погоды. Выбери, что тебя интересует:',
+            reply_markup=reply_markup
+        )
+
+# {{ Новая функция для меню запланированных прогнозов }}
+async def manage_scheduled_forecasts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    keyboard = [
+        [InlineKeyboardButton("Подписаться на прогноз", callback_data='subscribe_forecast_menu')],
+        [InlineKeyboardButton("Мои подписки", callback_data='list_scheduled_forecasts')],
+        [InlineKeyboardButton("Отписаться от прогноза", callback_data='unsubscribe_forecast_menu')],
+        [InlineKeyboardButton("⬅️ Назад в меню", callback_data='back_to_main_menu')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    if update.callback_query:
+        query = update.callback_query
+        await query.edit_message_text(
+            'Управление запланированными прогнозами:',
+            reply_markup=reply_markup
+        )
+    else:
+        await update.message.reply_text(
+            'Управление запланированными прогнозами:',
             reply_markup=reply_markup
         )
 
@@ -445,6 +468,67 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         context.user_data['next_action'] = 'admin_reply_to_user'
         context.user_data['target_user_id'] = target_user_id # Сохраняем ID пользователя для последующего использования
         await query.edit_message_text(f'Введите сообщение для пользователя с ID {target_user_id}:')
+
+    elif query.data == 'manage_scheduled_forecasts': # {{ Обработка новой кнопки "Запланированный прогноз" }}
+        await manage_scheduled_forecasts_menu(update, context)
+
+    elif query.data == 'subscribe_forecast_menu': # {{ Обработка кнопки "Подписаться на прогноз" }}
+        context.user_data['next_action'] = 'awaiting_subscribe_input'
+        await query.edit_message_text(
+            'Пожалуйста, введите город и время для ежедневного прогноза (например: Москва 09:00)'
+        )
+
+    elif query.data == 'list_scheduled_forecasts': # {{ Обработка кнопки "Мои подписки" }}
+        user_id = query.from_user.id
+        scheduled_forecast = get_scheduled_forecast(user_id)
+
+        if scheduled_forecast:
+            city, forecast_time = scheduled_forecast
+            message = f'Ваш текущий запланированный прогноз: \nГород: {city}\nВремя: {forecast_time}'
+            # Можно добавить кнопки для управления этой подпиской (например, изменить/отменить)
+            keyboard = [
+                [InlineKeyboardButton("Отменить подписку", callback_data='unsubscribe_forecast_single')],
+                [InlineKeyboardButton("⬅️ Назад в меню запланированных прогнозов", callback_data='manage_scheduled_forecasts')],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(message, reply_markup=reply_markup)
+        else:
+            keyboard = [
+                [InlineKeyboardButton("Подписаться на прогноз", callback_data='subscribe_forecast_menu')],
+                [InlineKeyboardButton("⬅️ Назад в меню запланированных прогнозов", callback_data='manage_scheduled_forecasts')],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text('У вас нет активных запланированных прогнозов.', reply_markup=reply_markup)
+
+    elif query.data == 'unsubscribe_forecast_single': # {{ Обработка кнопки "Отменить подписку" для одиночного прогноза }}
+        user_id = query.from_user.id
+        await unsubscribe_forecast(update, context) # Вызываем существующую функцию отписки
+        await query.edit_message_text('Ваша подписка на ежедневный прогноз отменена.')
+        await manage_scheduled_forecasts_menu(update, context) # Вернуть в меню запланированных прогнозов
+
+    elif query.data == 'unsubscribe_forecast_menu': # {{ Обработка кнопки "Отписаться от прогноза" из главного меню запланированных прогнозов }}
+        user_id = query.from_user.id
+        scheduled_forecast = get_scheduled_forecast(user_id)
+        if scheduled_forecast:
+            city, forecast_time = scheduled_forecast
+            message = f'Вы уверены, что хотите отменить подписку на прогноз в {city} в {forecast_time}?'
+            keyboard = [
+                [InlineKeyboardButton("Да, отменить", callback_data='unsubscribe_forecast_confirm')],
+                [InlineKeyboardButton("Нет, оставить", callback_data='manage_scheduled_forecasts')],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(message, reply_markup=reply_markup)
+        else:
+            keyboard = [[InlineKeyboardButton("⬅️ Назад в меню запланированных прогнозов", callback_data='manage_scheduled_forecasts')]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text('У вас нет активных запланированных прогнозов для отмены.', reply_markup=reply_markup)
+
+    elif query.data == 'unsubscribe_forecast_confirm': # {{ Обработка подтверждения отмены подписки }}
+        user_id = query.from_user.id
+        await unsubscribe_forecast(update, context) # Вызываем существующую функцию отписки
+        await query.edit_message_text('Ваша подписка на ежедневный прогноз отменена.')
+        await manage_scheduled_forecasts_menu(update, context) # Вернуть в меню запланированных прогнозов
+
     elif query.data.startswith('weather_'): # {{ Новый обработчик для кнопок избранных городов }}
         city = query.data.split('weather_')[1]
         api_key = os.getenv('OPENWEATHER_API_KEY')
@@ -475,7 +559,7 @@ async def handle_city_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             else:
                 # {{ Изменение: если пользователь ничего не ввел и не было команды, кроме feedback, то просим ввести город.
                 #    Если это feedback, то пустой текст не обрабатываем как город. }}
-                if context.user_data['next_action'] not in ['feedback', 'admin_reply_to_user']: # Добавлено 'admin_reply_to_user'
+                if context.user_data['next_action'] not in ['feedback', 'admin_reply_to_user', 'awaiting_subscribe_input']: # Добавлено 'admin_reply_to_user'
                     await update.message.reply_text('Вы не указали город. Пожалуйста, введите название города или установите город по умолчанию с помощью /setcity.')
                     return
                 # Для feedback и admin_reply_to_user можно разрешить пустые сообщения или просто завершить, если пусто
@@ -490,7 +574,7 @@ async def handle_city_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         if not api_key:
             # {{ Изменение: проверка API ключа только если действие не 'feedback' и не 'admin_reply_to_user' }}
-            if context.user_data['next_action'] not in ['feedback', 'admin_reply_to_user']:
+            if context.user_data['next_action'] not in ['feedback', 'admin_reply_to_user', 'awaiting_subscribe_input']:
                 await update.message.reply_text('API ключ OpenWeatherMap не установлен. Пожалуйста, установите переменную окружения OPENWEATHER_API_KEY.')
                 context.user_data.pop('next_action', None) # Удаляем действие даже при ошибке API ключа
                 return
@@ -506,6 +590,24 @@ async def handle_city_input(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         elif action == 'hourly_forecast': # Обработка для почасового прогноза
             hourly_forecast_info = await get_hourly_forecast(city, api_key)
             await update.message.reply_text(hourly_forecast_info)
+        elif action == 'awaiting_subscribe_input': # {{ Новый обработчик для ввода города и времени подписки }}
+            # Ввод должен быть в формате "Город ЧЧ:ММ"
+            parts = city.rsplit(' ', 1) # Разделяем по последнему пробелу, чтобы отделить время
+            if len(parts) < 2:
+                await update.message.reply_text('Неверный формат. Пожалуйста, введите город и время (например: Москва 09:00)')
+                return
+            
+            city_name = parts[0]
+            forecast_time_str = parts[1]
+            
+            # Создаем фиктивный объект ContextTypes.DEFAULT_TYPE для вызова subscribe_forecast
+            # Это может быть более изящно, если subscribe_forecast переделать, чтобы она принимала просто аргументы
+            # Вместо этого, можно временно установить context.args
+            context.args = [city_name, forecast_time_str]
+            await subscribe_forecast(update, context)
+            # Удаляем context.args, чтобы не повлиять на другие обработчики
+            context.args = [] 
+
         # {{ Добавляем обработку для обратной связи }}
         elif action == 'feedback':
             admin_chat_id = os.getenv('ADMIN_CHAT_ID')
