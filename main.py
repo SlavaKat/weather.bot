@@ -408,7 +408,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             fav_city_buttons = []
             for city in favorite_cities:
                 # Используем префикс 'fav_city:' для callback_data, чтобы потом легко определить, что это город из избранного
-                fav_city_buttons.append([InlineKeyboardButton(city, callback_data=f'fav_city:{city}')])
+                fav_city_buttons.append([InlineKeyboardButton(city, callback_data=f'weather_{city}')])
             
             # Добавляем кнопку "Назад"
             fav_city_buttons.append([InlineKeyboardButton("⬅️ Назад в меню", callback_data='back_to_main_menu')])
@@ -445,7 +445,14 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         context.user_data['next_action'] = 'admin_reply_to_user'
         context.user_data['target_user_id'] = target_user_id # Сохраняем ID пользователя для последующего использования
         await query.edit_message_text(f'Введите сообщение для пользователя с ID {target_user_id}:')
-
+    elif query.data.startswith('weather_'): # {{ Новый обработчик для кнопок избранных городов }}
+        city = query.data.split('weather_')[1]
+        api_key = os.getenv('OPENWEATHER_API_KEY')
+        if not api_key:
+            await query.edit_message_text('API ключ OpenWeatherMap не установлен. Пожалуйста, установите переменную окружения OPENWEATHER_API_KEY.')
+            return
+        weather_info = await get_weather(city, api_key)
+        await query.edit_message_text(weather_info)
 
 # {{ Новая команда /feedback }}
 async def feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
