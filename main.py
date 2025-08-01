@@ -294,9 +294,11 @@ async def unsubscribe_forecast(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # {{ Функция, которая будет отправлять запланированный прогноз }}
 async def send_scheduled_weather(context: ContextTypes.DEFAULT_TYPE) -> None:
+    print(f'Attempting to send scheduled weather.')
     job_data = context.job.data
     user_id = job_data['user_id']
     city = job_data['city']
+    print(f'Scheduled job triggered for user_id: {user_id}, city: {city}.')
     
     api_key = os.getenv('OPENWEATHER_API_KEY')
     if not api_key:
@@ -304,8 +306,12 @@ async def send_scheduled_weather(context: ContextTypes.DEFAULT_TYPE) -> None:
         # Можно отправить сообщение пользователю, если это критично, но для автоматической задачи лучше просто залогировать
         return
 
-    weather_info = await get_weather(city, api_key)
-    await context.bot.send_message(chat_id=user_id, text=f'Ваш ежедневный прогноз погоды для {city}:\n\n{weather_info}')
+    try:
+        weather_info = await get_weather(city, api_key)
+        await context.bot.send_message(chat_id=user_id, text=f'Ваш ежедневный прогноз погоды для {city}:\n\n{weather_info}')
+        print(f'Scheduled weather sent successfully to user {user_id} for city {city}.')
+    except Exception as e:
+        print(f'Error sending scheduled weather to user {user_id} for city {city}: {e}')
 
 #Команда /weather
 async def weather(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
