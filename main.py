@@ -486,6 +486,50 @@ async def sub_view_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("Вы можете удалить эту подписку.", reply_markup=InlineKeyboardMarkup(keyboard))
     return SELECTING_ACTION
 
+async def sub_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показывает детали конкретной подписки."""
+    query = update.callback_query
+    await query.answer()
+    sub_id = int(query.data.split('_')[-1])
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM subscriptions WHERE id = ?', (sub_id,))
+    sub = cursor.fetchone()
+    conn.close()
+
+    if not sub:
+        await query.edit_message_text("Ошибка: подписка не найдена.")
+        # Возвращаемся к главному меню подписок
+        await manage_subscriptions_menu(update, context, is_new_message=False)
+        return SELECTING_ACTION
+
+    days_map = {"0": "Пн", "1": "Вт", "2": "Ср", "3": "Чт", "4": "Пт", "5": "Сб", "6": "Вс"}
+    forecast_map = {
+        'daily': 'Ежедневный прогноз',
+        'alert_rain': '🚨 Оповещение о дожде'
+    }
+    
+    days_list = json.loads(sub['days'])
+    days_str = ", ".join(sorted([days_map[d] for d in days_list], key=lambda x: list(days_map.values()).index(x)))
+    forecast_type_str = forecast_map.get(sub['forecast_type'], 'Неизвестный тип')
+
+    text = (
+        f"<b>Детали подписки №{sub['id']}</b>\n"
+        f"- <b>Город:</b> {sub['city']}\n"
+        f"- <b>Время:</b> {sub['time']}\n"
+        f"- <b>Дни:</b> {days_str}\n"
+        f"- <b>Тип:</b> {forecast_type_str}"
+    )
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data='manage_subscriptions')]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    return SELECTING_ACTION
+
+
 async def sub_delete_confirmed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     sub_id = int(query.data.split('_')[-1])
