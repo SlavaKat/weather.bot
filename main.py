@@ -181,7 +181,7 @@ def get_uv_index_description(uv_index: float) -> str:
     return f"{uv_index} (Экстремальный)"
 
 async def get_one_call_data(lat: float, lon: float, api_key: str) -> dict:
-    url = f'https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude=minutely,alerts&appid={api_key}&units=metric&lang=ru'
+    url = f'https://api.openweathermap.org/data/2.5/onecall?lat={lat}&lon={lon}&exclude=minutely,alerts&appid={api_key}&units=metric&lang=ru'
     async with httpx.AsyncClient() as client:
         response = await client.get(url)
         response.raise_for_status()
