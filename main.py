@@ -189,28 +189,31 @@ async def get_one_call_data(lat: float, lon: float, api_key: str) -> dict:
 
 async def get_weather_by_coords(latitude: float, longitude: float, api_key: str, city_name: str = None) -> str:
     try:
+        url = f'https://api.openweathermap.org/data/2.5/weather?lat={latitude}&lon={longitude}&appid={api_key}&units=metric&lang=ru'
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            data = response.json()
+            
         if not city_name:
-            geo_url = f'https://api.openweathermap.org/data/2.5/weather?lat={latitude}&lon={longitude}&appid={api_key}&units=metric&lang=ru'
-            async with httpx.AsyncClient() as client:
-                response = await client.get(geo_url)
-                response.raise_for_status()
-                geodata = response.json()
-            city_name = geodata.get('name', 'Неизвестное место')
-
-        data = await get_one_call_data(latitude, longitude, api_key)
-        current = data['current']
+            city_name = data.get('name', 'Неизвестное место')
+            
+        main_data = data['main']
+        weather_data = data['weather'][0]
+        wind_speed = data['wind']['speed']
+        sunrise = datetime.fromtimestamp(data['sys']['sunrise']).strftime('%H:%M')
+        sunset = datetime.fromtimestamp(data['sys']['sunset']).strftime('%H:%M')
         
         return (
             f'Погода в {city_name}:\n'
-            f'🌡️ Температура: {current["temp"]:.1f}°C (ощущается как {current["feels_like"]:.1f}°C)\n'
-            f'📝 Описание: {current["weather"][0]["description"].capitalize()}\n'
-            f'💧 Влажность: {current["humidity"]}%\n'
-            f'💨 Скорость ветра: {current["wind_speed"]} м/с\n'
-            f'☀️ УФ-индекс: {get_uv_index_description(current.get("uvi", 0))}\n'
-            f'🌅 Восход: {datetime.fromtimestamp(current["sunrise"]).strftime("%H:%M")} | 🌇 Закат: {datetime.fromtimestamp(current["sunset"]).strftime("%H:%M")}'
+            f'🌡️ Температура: {main_data["temp"]:.1f}°C (ощущается как {main_data["feels_like"]:.1f}°C)\n'
+            f'📝 Описание: {weather_data["description"].capitalize()}\n'
+            f'💧 Влажность: {main_data["humidity"]}%\n'
+            f'💨 Скорость ветра: {wind_speed} м/с\n'
+            f'🌅 Восход: {sunrise} | 🌇 Закат: {sunset}'
         )
     except Exception as e:
-        return f'Произошла непредвиденная ошибка: {e}'
+        return f'Произошла ошибка при получении погоды. Пожалуйста, попробуйте позже.'
 
 async def get_hourly_forecast(city: str, api_key: str) -> str:
     url = f'https://api.openweathermap.org/data/2.5/forecast?q={city}&appid={api_key}&units=metric&lang=ru'
