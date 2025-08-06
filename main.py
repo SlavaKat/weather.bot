@@ -5,6 +5,12 @@ import json
 import pytz
 import types
 from datetime import datetime, time as dt_time
+import asyncio
+import logging
+import warnings
+from telegram.warnings import PTBUserWarning
+
+warnings.filterwarnings("ignore", category=PTBUserWarning)
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -241,23 +247,48 @@ async def get_hourly_forecast(city: str, api_key: str) -> str:
 
 # --- Основные команды и обработчики ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = [
-        [InlineKeyboardButton("Текущая погода", callback_data='ask_city_weather')],
-        [InlineKeyboardButton("Прогноз на 5 дней", callback_data='ask_city_forecast')],
-        [InlineKeyboardButton("Почасовой прогноз", callback_data='ask_city_hourly')],
-        [InlineKeyboardButton("📍 Погода по местоположению", callback_data='get_weather_by_location')],
-        [InlineKeyboardButton("Избранные города", callback_data='show_favorite_cities')],
-        [InlineKeyboardButton("⚙️ Управление подписками", callback_data='manage_subscriptions')],
-        [InlineKeyboardButton("✍️ Обратная связь", callback_data='feedback_start')],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    user = update.effective_user
-    text = f'Привет, {user.first_name}! Я MeteoBot. Выбери, что тебя интересует:'
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
-    else:
-        await update.message.reply_text(text, reply_markup=reply_markup)
+    print("DEBUG: Start function called")
+    try:
+        print(f"DEBUG: Update object: {update}")
+        print(f"DEBUG: Update type: {type(update)}")
+        print(f"DEBUG: Update ID: {update.update_id}")
+        
+        if update.message:
+            print(f"DEBUG: Message from: {update.message.from_user.username or update.message.from_user.id}")
+        if update.callback_query:
+            print(f"DEBUG: Callback from: {update.callback_query.from_user.username or update.callback_query.from_user.id}")
+            print(f"DEBUG: Callback data: {update.callback_query.data}")
+
+        keyboard = [
+            [InlineKeyboardButton("Текущая погода", callback_data='ask_city_weather')],
+            [InlineKeyboardButton("Прогноз на 5 дней", callback_data='ask_city_forecast')],
+            [InlineKeyboardButton("Почасовой прогноз", callback_data='ask_city_hourly')],
+            [InlineKeyboardButton("📍 Погода по местоположению", callback_data='get_weather_by_location')],
+            [InlineKeyboardButton("Избранные города", callback_data='show_favorite_cities')],
+            [InlineKeyboardButton("⚙️ Управление подписками", callback_data='manage_subscriptions')],
+            [InlineKeyboardButton("✍️ Обратная связь", callback_data='feedback_start')],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        user = update.effective_user
+        text = f'Привет, {user.first_name}! Я MeteoBot. Выбери, что тебя интересует:'
+        
+        print("DEBUG: Attempting to send message...")
+        if update.callback_query:
+            print("DEBUG: Editing message via callback")
+            await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+        else:
+            print("DEBUG: Sending new message")
+            await update.message.reply_text(text, reply_markup=reply_markup)
+        print("DEBUG: Message sent successfully")
+        
+    except Exception as e:
+        print(f"ERROR in start function: {str(e)}")
+        print(f"ERROR Type: {type(e).__name__}")
+        if hasattr(e, '__traceback__'):
+            import traceback
+            print("Traceback:")
+            traceback.print_exc()
+        raise
 
 async def set_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
@@ -334,40 +365,28 @@ async def show_favorite_cities_menu(update: Update, context: ContextTypes.DEFAUL
 
 # --- Система подписок (ConversationHandler) ---
 
-# 1. Главное меню подписок
-async def manage_subscriptions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, is_new_message: bool = True) -> int:
-    """Главное меню управления подписками."""
-    query = update.callback_query
-    if query:
-        await query.answer()
+# --- Минимальные заглушки для ConversationHandler ---
+from telegram import Update
+from telegram.ext import ContextTypes, ConversationHandler
 
-    user_id = update.effective_user.id
-    subs = get_user_subscriptions(user_id)
-
-    text = "⚙️ <b>Управление подписками</b>\n\nЗдесь вы можете добавлять, просматривать и удалять свои подписки."
-    keyboard = [
-        [InlineKeyboardButton("➕ Добавить ежедневный прогноз", callback_data='sub_add_daily')],
-        [InlineKeyboardButton("🚨 Добавить оповещение о дожде", callback_data='sub_add_rain_alert')],
-    ]
-
-    if subs:
-        text += "\n\nВаши активные подписки:"
-        for sub in subs:
-            sub_type_rus = "Ежедневный прогноз" if sub['forecast_type'] == 'daily' else "Оповещение о дожде"
-            button_text = f"{sub['city']} ({sub_type_rus})"
-            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"sub_view_{sub['id']}")])
-    else:
-        text += "\n\nУ вас пока нет активных подписок."
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад в главное меню", callback_data='back_to_main_menu')])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    if query.message.text != text:
-        await query.edit_message_text(text, reply_markup=reply_markup)
-    else:
-        await query.answer()
-
-    return SELECTING_ACTION
+async def sub_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+async def sub_receive_forecast_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+async def sub_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+async def sub_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+async def sub_receive_city(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+async def sub_receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+async def sub_receive_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
+async def sub_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pass
 
 async def sub_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -396,204 +415,43 @@ async def sub_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     return SELECTING_ACTION
 
-async def sub_new(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+# 1. Главное меню подписок
+async def manage_subscriptions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, is_new_message: bool = True) -> int:
+    """Главное меню управления подписками."""
     query = update.callback_query
-    await query.answer()
-    context.user_data['new_sub'] = {}
+    if query:
+        await query.answer()
+
+    user_id = update.effective_user.id
+    subs = get_user_subscriptions(user_id)
+
+    text = "⚙️ <b>Управление подписками</b>\n\nЗдесь вы можете добавлять, просматривать и удалять свои подписки."
     keyboard = [
-        [InlineKeyboardButton("Ежедневный прогноз погоды", callback_data='sub_type_daily')],
-        [InlineKeyboardButton("Оповещение о дожде/снеге", callback_data='sub_type_alert_rain')],
-        [InlineKeyboardButton("Отмена", callback_data='sub_cancel')]
+        [InlineKeyboardButton("➕ Добавить ежедневный прогноз", callback_data='sub_add_daily')],
+        [InlineKeyboardButton("🚨 Добавить оповещение о дожде", callback_data='sub_add_rain_alert')],
     ]
-    await query.edit_message_text(
-        "Выберите тип подписки:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return SELECTING_ACTION
 
-async def sub_receive_forecast_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    forecast_type = query.data.split('_')[-1]
-    context.user_data['new_sub']['forecast_type'] = forecast_type
-    await query.answer()
-    await query.edit_message_text("Введите город для подписки:")
-    return AWAITING_CITY
-
-async def sub_receive_city(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    city = update.message.text
-    context.user_data['new_sub']['city'] = city
-    
-    forecast_type = context.user_data['new_sub']['forecast_type']
-    if forecast_type == 'daily':
-        await update.message.reply_text("Введите желаемое время для получения прогноза в формате ЧЧ:ММ (например, 08:00).")
-        return AWAITING_TIME
-    elif forecast_type == 'alert_rain':
-        user_id = update.effective_user.id
-        sub_data = context.user_data['new_sub']
-        sub_data['time'] = None
-        sub_data['days'] = None
-        sub_id = add_subscription(user_id, sub_data)
-        await schedule_subscription_jobs(context.application, sub_id, user_id, sub_data)
-        await update.message.reply_text(f"Подписка на оповещения о дожде для города '{city}' успешно создана!")
-        await sub_menu_command(update, context)
-        return ConversationHandler.END
-
-async def sub_receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    try:
-        time_str = update.message.text
-        user_time = dt_time.fromisoformat(time_str)
-        context.user_data['new_sub']['time'] = user_time.strftime('%H:%M')
-        context.user_data['selected_days'] = []
-        
-        keyboard = get_days_keyboard([])
-        await update.message.reply_text(
-            "Выберите дни недели для получения прогноза. Нажмите 'Готово', когда закончите.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return SELECTING_DAYS
-    except ValueError:
-        await update.message.reply_text("Неверный формат времени. Пожалуйста, введите время в формате ЧЧ:ММ (например, 08:00).")
-        return AWAITING_TIME
-
-async def sub_receive_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    day = query.data.split('_')[-1]
-    await query.answer()
-
-    selected_days = context.user_data.get('selected_days', [])
-
-    if day == 'done':
-        if not selected_days:
-            await query.answer("Пожалуйста, выберите хотя бы один день.", show_alert=True)
-            return SELECTING_DAYS
-        
-        user_id = query.from_user.id
-        sub_data = context.user_data['new_sub']
-        sub_data['days'] = json.dumps(sorted(selected_days))
-        sub_id = add_subscription(user_id, sub_data)
-        await schedule_subscription_jobs(context.application, sub_id, user_id, sub_data)
-        
-        await query.edit_message_text(f"Подписка на ежедневный прогноз для города '{sub_data['city']}' успешно создана!")
-        await sub_menu_command(update, context)
-        return ConversationHandler.END
-
-    day_int = int(day)
-    if day_int in selected_days:
-        selected_days.remove(day_int)
-    else:
-        selected_days.append(day_int)
-    
-    context.user_data['selected_days'] = selected_days
-    keyboard = get_days_keyboard(selected_days)
-    await query.edit_message_text(
-        "Выберите дни недели. Нажмите 'Готово', когда закончите.",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return SELECTING_DAYS
-
-async def sub_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    sub_id = int(query.data.split('_')[-1])
-    
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM subscriptions WHERE id = ?', (sub_id,))
-        sub = dict(cursor.fetchone())
-
-    if not sub:
-        await query.edit_message_text("Ошибка: подписка не найдена.", reply_markup=await get_sub_menu_keyboard(query.from_user.id))
-        return SELECTING_ACTION
-
-    sub_type_rus = "Ежедневный прогноз" if sub['forecast_type'] == 'daily' else "Оповещение о дожде"
-    text = f"<b>Детали подписки:</b>\n\n"
-    text += f"<b>Город:</b> {sub['city']}\n"
-    text += f"<b>Тип:</b> {sub_type_rus}\n"
-
-    if sub['forecast_type'] == 'daily':
-        days_map = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-        days_list = json.loads(sub['days'])
-        days_str = ', '.join([days_map[d] for d in days_list])
-        text += f"<b>Время:</b> {sub['time']}\n"
-        text += f"<b>Дни:</b> {days_str}\n"
-
-    keyboard = [
-        [InlineKeyboardButton("🗑️ Удалить подписку", callback_data=f"sub_delete_{sub_id}")],
-        [InlineKeyboardButton("◀️ Назад к списку", callback_data='manage_subscriptions')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-    return SELECTING_ACTION
-
-async def sub_delete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    sub_id = int(query.data.split('_')[-1])
-    
-    job_name = f"sub_{sub_id}"
-    jobs = context.application.job_queue.get_jobs_by_name(job_name)
-    for job in jobs:
-        job.remove()
-
-    delete_subscription(sub_id)
-    await query.answer("Подписка удалена.")
-    await sub_menu(update, context)
-    return SELECTING_ACTION
-
-async def sub_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    await query.edit_message_text("Действие отменено.")
-    await sub_menu(update, context)
-    return ConversationHandler.END
-
-async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await start(update, context)
-    return ConversationHandler.END
-
-# --- Вспомогательные функции для клавиатур ---
-def get_days_keyboard(selected_days: list) -> list:
-    days = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-    keyboard = []
-    row = []
-    for i, day_name in enumerate(days):
-        text = f"✅ {day_name}" if i in selected_days else day_name
-        row.append(InlineKeyboardButton(text, callback_data=f"day_{i}"))
-        if len(row) == 4:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("Готово", callback_data="day_done")])
-    return keyboard
-
-async def get_sub_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    subscriptions = get_user_subscriptions(user_id)
-    keyboard = []
-    if subscriptions:
-        for sub in subscriptions:
+    if subs:
+        text += "\n\nВаши активные подписки:"
+        for sub in subs:
             sub_type_rus = "Ежедневный прогноз" if sub['forecast_type'] == 'daily' else "Оповещение о дожде"
             button_text = f"{sub['city']} ({sub_type_rus})"
             keyboard.append([InlineKeyboardButton(button_text, callback_data=f"sub_view_{sub['id']}")])
-    keyboard.append([InlineKeyboardButton("➕ Создать новую подписку", callback_data='sub_new')])
+    else:
+        text += "\n\nУ вас пока нет активных подписок."
+    
     keyboard.append([InlineKeyboardButton("◀️ Назад в главное меню", callback_data='back_to_main_menu')])
-    return InlineKeyboardMarkup(keyboard)
-
-async def sub_menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = "⚙️ Управление подписками"
-    reply_markup = await get_sub_menu_keyboard(user_id)
-    if update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup)
-    elif update.callback_query:
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+    
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except:
+        await query.message.reply_text(text, reply_markup=reply_markup)
 
 # --- Система обратной связи ---
 async def feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("Пожалуйста, введите ваше сообщение для администратора.")
+    await query.edit_message_text("Пожалуйста, введите ваше сообщение для разработчика.")
     return AWAITING_FEEDBACK
 
 async def feedback_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -608,7 +466,7 @@ async def feedback_receive(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 text=f"Новое сообщение от {user_name} (ID: {user_id}):\n\n{feedback_text}",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Ответить", callback_data=f'admin_reply_{user_id}')]])
             )
-            await update.message.reply_text("Спасибо! Ваше сообщение отправлено администратору.")
+            await update.message.reply_text("Спасибо! Ваше сообщение отправлено разработчику.")
         except Exception as e:
             await update.message.reply_text(f"Не удалось отправить сообщение. Ошибка: {e}")
     else:
@@ -681,16 +539,30 @@ async def schedule_subscription_jobs(application: Application, sub_id: int, user
     if sub_data['forecast_type'] == 'daily':
         moscow_tz = pytz.timezone('Europe/Moscow')
         user_time = dt_time.fromisoformat(sub_data['time'])
+        
+        # Создаем объект datetime с сегодняшней датой и указанным временем
+        user_datetime = datetime.now()
+        user_datetime = user_datetime.replace(
+            hour=user_time.hour,
+            minute=user_time.minute,
+            second=0,
+            microsecond=0
+        )
+        
+        # Локализуем время в московском часовом поясе
+        user_datetime = moscow_tz.localize(user_datetime)
+        # Конвертируем в UTC, так как run_daily ожидает время в UTC
+        utc_time = user_datetime.astimezone(pytz.utc).time()
+        
         days = tuple(json.loads(sub_data['days']))
         scheduler.run_daily(
             send_daily_forecast,
-            time=user_time,
+            time=utc_time,
             days=days,
             chat_id=user_id,
             user_id=user_id,
             name=job_name,
-            data={'user_id': user_id, 'city': sub_data['city']},
-            tzinfo=moscow_tz
+            data={'user_id': user_id, 'city': sub_data['city']}
         )
     elif sub_data['forecast_type'] == 'alert_rain':
         scheduler.run_repeating(
@@ -719,8 +591,9 @@ async def location_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(weather_info, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data='back_to_main')]]))
 
 # --- Главная функция --- 
-def main() -> None:
+async def main() -> None:
     init_db()
+    print("Бот запущен и готов к работе. Для остановки нажмите Ctrl+C")
 
     persistence = PicklePersistence(filepath=PERSISTENCE_PATH)
     
@@ -728,6 +601,7 @@ def main() -> None:
 
     # --- Хендлеры для подписок ---
     sub_handler = ConversationHandler(
+        per_message=False,
         entry_points=[CallbackQueryHandler(sub_menu, pattern='^manage_subscriptions$')],
         states={
             SELECTING_ACTION: [
@@ -744,7 +618,7 @@ def main() -> None:
         },
         fallbacks=[
             CallbackQueryHandler(sub_cancel, pattern='^sub_cancel$'),
-            CommandHandler('start', start)
+
         ],
         map_to_parent={
             ConversationHandler.END: ConversationHandler.END
@@ -754,6 +628,7 @@ def main() -> None:
 
     # --- Хендлер для обратной связи ---
     feedback_handler = ConversationHandler(
+        per_message=False,
         entry_points=[CallbackQueryHandler(feedback_start, pattern='^feedback_start$')],
         states={
             AWAITING_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, feedback_receive)]
@@ -773,7 +648,9 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.LOCATION, location_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    application.run_polling()
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    asyncio.run(main())
